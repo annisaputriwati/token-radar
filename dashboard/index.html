@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Signal — Token Launch Radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div>
+        <h1>Launch Signal</h1>
+        <p class="tagline">Token launch radar: protocols that still record no token, ranked by what a launch would be worth.</p>
+      </div>
+    </div>
+    <div class="mast-meta" id="mast-meta"></div>
+  </div>
+  <div class="stat-strip" id="stat-strip"></div>
+</header>
+
+<main>
+  <section class="model-strip" id="model-strip"></section>
+
+  <section class="board-head">
+    <h2>The board <span class="board-count" id="board-count"></span></h2>
+    <div class="controls">
+      <label class="ctl grow">Search
+        <input id="q" type="search" placeholder="Protocol, slug or chain" autocomplete="off">
+      </label>
+      <label class="ctl">Category
+        <select id="cat"></select>
+      </label>
+      <label class="ctl">Chain
+        <select id="chain"></select>
+      </label>
+      <label class="ctl check">
+        <input id="wl" type="checkbox"> Watchlist only
+      </label>
+    </div>
+  </section>
+
+  <section class="board-wrap">
+    <table class="board" id="board">
+      <thead>
+        <tr>
+          <th data-sort="rank" class="num">#</th>
+          <th data-sort="name">Protocol</th>
+          <th data-sort="category">Category</th>
+          <th>Chains</th>
+          <th data-sort="tvl" class="num">TVL</th>
+          <th data-sort="change" class="num">7d %</th>
+          <th data-sort="age" class="num">Tokenless</th>
+          <th data-sort="implied" class="num">Implied value</th>
+          <th data-sort="ratio" class="num">x TVL</th>
+        </tr>
+      </thead>
+      <tbody id="board-body"></tbody>
+    </table>
+    <p class="empty" id="board-empty" hidden>No protocol matches those filters. Loosen one and the radar sweeps again.</p>
+  </section>
+
+  <section class="live" id="live">
+    <h2>Already trading <span class="live-note">kept off the board: these tokens exist, and their market caps are the yardstick the model measures with</span></h2>
+    <table class="board live-table">
+      <thead>
+        <tr><th>Protocol</th><th>Symbol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">MCap / TVL</th><th class="num">7d %</th></tr>
+      </thead>
+      <tbody id="live-body"></tbody>
+    </table>
+  </section>
+
+  <section class="model" id="model">
+    <h2>How the number is made</h2>
+    <div id="model-body"></div>
+    <h3>Peer multiples by category</h3>
+    <table class="board mult-table">
+      <thead>
+        <tr><th>Category</th><th class="num">Traded peers</th><th class="num">Median MCap / TVL</th><th>Basis</th></tr>
+      </thead>
+      <tbody id="mult-body"></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p id="foot-note"></p>
+  </footer>
+</main>
+
+<aside class="detail" id="detail" hidden>
+  <button class="detail-close" id="detail-close" aria-label="Close detail">x</button>
+  <div id="detail-body"></div>
+</aside>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
