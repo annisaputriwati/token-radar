@@ -13,7 +13,7 @@
       <div class="brand-mark" aria-hidden="true"><span></span></div>
       <div>
         <h1>Launch Signal</h1>
-        <p class="tagline">Token launch radar: protocols that still record no token, ranked by what a launch would be worth.</p>
+        <p class="tagline">Token launch radar: protocols that still record no token, ranked by a fitted value model, launch odds measured from the snapshot itself, and farm plans netted to a verdict.</p>
       </div>
     </div>
     <div class="mast-meta" id="mast-meta"></div>
@@ -36,6 +36,14 @@
       <label class="ctl">Chain
         <select id="chain"></select>
       </label>
+      <label class="ctl">Verdict
+        <select id="verdict">
+          <option value="">All verdicts</option>
+          <option value="FARM">FARM</option>
+          <option value="THIN">THIN</option>
+          <option value="SKIP">SKIP</option>
+        </select>
+      </label>
       <label class="ctl check">
         <input id="wl" type="checkbox"> Watchlist only
       </label>
@@ -53,8 +61,9 @@
           <th data-sort="tvl" class="num">TVL</th>
           <th data-sort="change" class="num">7d %</th>
           <th data-sort="age" class="num">Tokenless</th>
+          <th data-sort="odds" class="num">Odds</th>
           <th data-sort="implied" class="num">Implied value</th>
-          <th data-sort="ratio" class="num">x TVL</th>
+          <th data-sort="verdict">Verdict</th>
         </tr>
       </thead>
       <tbody id="board-body"></tbody>
@@ -63,7 +72,7 @@
   </section>
 
   <section class="live" id="live">
-    <h2>Already trading <span class="live-note">kept off the board: these tokens exist, and their market caps are the yardstick the model measures with</span></h2>
+    <h2>Already trading <span class="live-note">kept off the board: these tokens exist, and their market caps are the data the value model is fitted on</span></h2>
     <table class="board live-table">
       <thead>
         <tr><th>Protocol</th><th>Symbol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">MCap / TVL</th><th class="num">7d %</th></tr>
@@ -75,10 +84,23 @@
   <section class="model" id="model">
     <h2>How the number is made</h2>
     <div id="model-body"></div>
-    <h3>Peer multiples by category</h3>
+    <h3>Held-out validation: every candidate, scored blind</h3>
     <table class="board mult-table">
       <thead>
-        <tr><th>Category</th><th class="num">Traded peers</th><th class="num">Median MCap / TVL</th><th>Basis</th></tr>
+        <tr><th>Candidate model</th><th class="num">Held-out median |log error|</th><th>Fate</th></tr>
+      </thead>
+      <tbody id="valid-body"></tbody>
+    </table>
+    <h3>Launch odds: the snapshot's own base rates</h3>
+    <div id="odds-body"></div>
+    <h3>The census: every protocol in the snapshot</h3>
+    <div id="census-body"></div>
+    <h3>Farm accounting: how a verdict is netted</h3>
+    <div id="farm-body"></div>
+    <h3>Fitted categories</h3>
+    <table class="board mult-table">
+      <thead>
+        <tr><th>Category</th><th class="num">Traded peers</th><th class="num">Fitted offset</th><th class="num">Multiple at $100M TVL</th><th>Basis</th></tr>
       </thead>
       <tbody id="mult-body"></tbody>
     </table>
