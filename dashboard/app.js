@@ -10,6 +10,7 @@ const state = {
   q: '',
   cat: 'All categories',
   chain: 'All chains',
+  verdict: '',
   wl: false,
   sort: 'rank',
   dir: 1,
@@ -26,10 +27,20 @@ function fmtUsd(n) {
   return `$${Math.round(n)}`;
 }
 
+/** A net dollar figure with its sign always showing: +$111, -$42. */
+function fmtNet(n) {
+  return `${n < 0 ? '-' : '+'}${fmtUsd(Math.abs(n))}`;
+}
+
 /** A signed percent with one decimal, or a dash when the snapshot records none. */
 function fmtPct(n) {
   if (n === null || n === undefined) return '-';
   return `${n > 0 ? '+' : ''}${n.toFixed(1)}%`;
+}
+
+/** A share as a whole percent: 0.5073 becomes 51%. */
+function fmtShare(n) {
+  return `${Math.round(n * 100)}%`;
 }
 
 /** A tokenless age in days as the phrase the board sorts by: 3.2y, 214d, unknown. */
@@ -56,31 +67,35 @@ function readHash() {
 }
 
 function renderMasthead() {
+  const c = R.census;
+  const excluded = c.excluded_product_category + c.excluded_versioned + c.excluded_wrapped + c.excluded_exchange_prefix;
   $('mast-meta').innerHTML =
     `snapshot <b>${esc(R.as_of)}</b><br>source <b>DefiLlama protocol index</b><br>model <b>${esc(R.model_version)}</b>`;
   const stats = [
     [R.watchlist_size, 'watchlist covered'],
     [R.board_size, 'pre-token ranked'],
-    [R.global_peers, 'traded peers measured'],
-    [R.multiples.length, 'categories priced'],
-    [fmtUsd(R.floor_usd), 'watchlist floor'],
+    [R.fit.peers, 'traded peers fitted'],
+    [c.already_trading, 'already trading'],
+    [c.total, 'protocols in census'],
   ];
   $('stat-strip').innerHTML = stats.map(([v, k]) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
   $('model-strip').innerHTML =
-    `<b>implied value</b> <span class="op">=</span> TVL <span class="op">x</span> <b>category peer multiple</b> ` +
-    `<span class="op">x</span> growth factor <span class="op">x</span> age factor` +
-    ` &nbsp;·&nbsp; global peer median <b>${R.global_multiple.toFixed(2)}x</b> from ${R.global_peers} traded protocols`;
+    `<b>implied</b> <span class="op">=</span> <b>fitted value</b> <span class="op">x</span> <b>launch odds</b>` +
+    ` &nbsp;·&nbsp; log(mcap) = <b>${R.fit.intercept.toFixed(2)}</b> + <b>${R.fit.slope.toFixed(2)}</b> x log(TVL) on ${R.fit.peers} peers` +
+    ` &nbsp;·&nbsp; held-out <b>${R.fit.winner_error.toFixed(2)}</b> vs v1 flat <b>${R.fit.flat_error.toFixed(2)}</b>` +
+    ` &nbsp;·&nbsp; census ${c.ranked} + ${c.already_trading} + ${excluded} = ${c.total}`;
   $('foot-note').textContent =
     `Launch Signal reads one sealed snapshot (${R.source}). Implied value is the model's claim about a launch that has not happened, ` +
     `derived only from the snapshot's own figures; it is not a prediction that a token will be issued. Farm plans are checklists, not financial advice.`;
 }
 
-/** Fill the two filter selects from the dataset, keeping the reader's current choice. */
+/** Fill the filter selects from the dataset, keeping the reader's current choice. */
 function renderControls() {
   const cats = [...new Set(R.rows.map((r) => r.category ?? 'Uncategorized'))].sort();
   $('cat').innerHTML = ['All categories', ...cats].map((c) => `<option ${c === state.cat ? 'selected' : ''}>${esc(c)}</option>`).join('');
   const chains = [...new Set(R.rows.flatMap((r) => r.chains))].sort();
   $('chain').innerHTML = ['All chains', ...chains].map((c) => `<option ${c === state.chain ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  $('verdict').value = state.verdict;
   $('q').value = state.q;
   $('wl').checked = state.wl;
 }
@@ -92,6 +107,7 @@ function visibleRows() {
     if (state.wl && !r.on_watchlist) return false;
     if (state.cat !== 'All categories' && (r.category ?? 'Uncategorized') !== state.cat) return false;
     if (state.chain !== 'All chains' && !r.chains.includes(state.chain)) return false;
+    if (state.verdict && r.verdict !== state.verdict) return false;
     if (q && !`${r.name} ${r.slug} ${r.chains.join(' ')}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -104,8 +120,9 @@ const SORT_KEYS = {
   tvl: (r) => r.tvl_usd,
   change: (r) => r.change_7d ?? -Infinity,
   age: (r) => r.age_days ?? -1,
+  odds: (r) => r.odds,
   implied: (r) => r.implied_value_usd,
-  ratio: (r) => r.implied_value_usd / Math.max(1, r.tvl_usd),
+  verdict: (r) => r.net_usd,
 };
 
 /** Draw the board table for the current filter and sort state. */
@@ -135,8 +152,9 @@ function renderBoard() {
         `<td class="num">${fmtUsd(r.tvl_usd)}</td>` +
         `<td class="num">${chg}</td>` +
         `<td class="num">${fmtAge(r.age_days)}</td>` +
+        `<td class="num">${fmtShare(r.odds)}</td>` +
         `<td class="num implied">${fmtUsd(r.implied_value_usd)}</td>` +
-        `<td class="num">${(r.implied_value_usd / Math.max(1, r.tvl_usd)).toFixed(2)}x</td></tr>`
+        `<td><span class="verdict v-${r.verdict.toLowerCase()}">${r.verdict}</span><span class="net">${fmtNet(r.net_usd)} net</span></td></tr>`
       );
     })
     .join('');
@@ -145,36 +163,41 @@ function renderBoard() {
   });
 }
 
-/** Open the detail drawer for one protocol: its record, its model's arithmetic, its plan. */
+/** Open the detail drawer for one protocol: its record, the fit's arithmetic, the netting, its plan. */
 function openDetail(slug) {
   const r = R.rows.find((row) => row.slug === slug);
   if (!r) return;
   state.selected = slug;
-  const base = Math.round(r.tvl_usd * r.multiple);
-  const afterGrowth = Math.round(base * r.growth_factor);
+  const cat = R.categories.find((c) => c.category === (r.category ?? 'Uncategorized'));
+  const offsetNote = cat && cat.offset !== 0 ? `, category offset ${cat.offset > 0 ? '+' : ''}${cat.offset.toFixed(2)}` : '';
   $('detail-body').innerHTML =
     `<h2>${esc(r.name)}</h2>` +
     `<div class="d-slug">${esc(r.slug)} · rank #${r.rank} of ${R.board_size}</div>` +
     `<div class="d-badges"><span class="badge pre">pre-token</span>` +
     (r.on_watchlist ? '<span class="badge wl">on the watchlist</span>' : '<span class="badge">found below the floor</span>') +
-    `<span class="badge">${esc(r.category ?? 'Uncategorized')}</span></div>` +
+    `<span class="badge">${esc(r.category ?? 'Uncategorized')}</span>` +
+    `<span class="badge v-${r.verdict.toLowerCase()}">verdict ${r.verdict}</span></div>` +
     `<div class="d-stats">` +
     `<div><div class="k">Implied launch value</div><div class="v big">${fmtUsd(r.implied_value_usd)}</div></div>` +
     `<div><div class="k">TVL</div><div class="v">${fmtUsd(r.tvl_usd)}</div></div>` +
     `<div><div class="k">7d TVL change</div><div class="v">${fmtPct(r.change_7d)}</div></div>` +
     `<div><div class="k">Tokenless for</div><div class="v">${fmtAge(r.age_days)}${r.listed_at ? ` (since ${esc(r.listed_at)})` : ''}</div></div>` +
     `<div><div class="k">Chains</div><div class="v">${esc(r.chains.join(', ') || '-')}</div></div>` +
-    `<div><div class="k">Implied / TVL</div><div class="v">${(r.implied_value_usd / Math.max(1, r.tvl_usd)).toFixed(2)}x</div></div>` +
+    `<div><div class="k">Launch odds</div><div class="v">${fmtShare(r.odds)}</div></div>` +
     `</div>` +
     `<h3>How this value is made</h3>` +
     `<div class="breakdown">` +
     `<div class="row"><span>TVL</span><span>${fmtUsd(r.tvl_usd)}</span></div>` +
-    `<div class="row"><span>x peer multiple <span class="note">(${esc(r.category ?? 'Uncategorized')}, ${r.multiple_basis}, ${r.category_peers} peer${r.category_peers === 1 ? '' : 's'})</span></span><span>${r.multiple.toFixed(2)}x</span></div>` +
-    `<div class="row"><span>= base value</span><span>${fmtUsd(base)}</span></div>` +
-    `<div class="row"><span>x growth factor <span class="note">(7d ${fmtPct(r.change_7d)})</span></span><span>${r.growth_factor.toFixed(2)}x</span></div>` +
-    `<div class="row"><span>= after growth</span><span>${fmtUsd(afterGrowth)}</span></div>` +
-    `<div class="row"><span>x age factor <span class="note">(${fmtAge(r.age_days)} tokenless)</span></span><span>${r.age_factor.toFixed(2)}x</span></div>` +
+    `<div class="row"><span>fitted value <span class="note">(log-log fit ${R.fit.intercept.toFixed(2)} + ${R.fit.slope.toFixed(2)} x log TVL${offsetNote}; ${esc(r.multiple_basis)}, ${r.category_peers} peer${r.category_peers === 1 ? '' : 's'})</span></span><span>${fmtUsd(r.fitted_value_usd)}</span></div>` +
+    `<div class="row"><span>x launch odds <span class="note">(age band ${fmtShare(r.odds_age_share)}, TVL band ${fmtShare(r.odds_tvl_share)})</span></span><span>${r.odds.toFixed(2)}x</span></div>` +
     `<div class="row total"><span>implied value</span><span>${fmtUsd(r.implied_value_usd)}</span></div>` +
+    `</div>` +
+    `<h3>Farm netting: verdict ${r.verdict}</h3>` +
+    `<div class="breakdown">` +
+    `<div class="row"><span>plan cost <span class="note">(gas, entry and exit, fees over ${r.weeks} weeks)</span></span><span>${fmtUsd(r.cost_usd)}</span></div>` +
+    `<div class="row"><span>your time</span><span>${r.hours} hours</span></div>` +
+    `<div class="row"><span>expected share <span class="note">(${Math.round(R.farm_accounting.drop_share * 100)}% of implied over ${R.farm_accounting.qualifying_wallets.toLocaleString('en-US')} wallets)</span></span><span>${fmtUsd(r.expected_usd)}</span></div>` +
+    `<div class="row total"><span>net</span><span>${fmtNet(r.net_usd)}</span></div>` +
     `</div>` +
     `<h3>Farm plan</h3>` +
     `<ol class="steps">${r.farm_steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`;
@@ -204,34 +227,78 @@ function renderLive() {
     .join('');
 }
 
-/** The model page: the formula in words, the stated constants, the measured multiples. */
+/** The model page: the fitted form, its blind test, the odds bands, the census, the accounting. */
 function renderModel() {
-  const m = R.model;
+  const f = R.fit;
+  const a = R.farm_accounting;
+  const c = R.census;
   $('model-body').innerHTML =
-    `<p>The board prices a launch that has not happened. For each pre-token protocol it asks what the market ` +
-    `already pays for a TVL dollar in the same line of business, then adjusts for momentum and for how long ` +
-    `the protocol has run without a token. <b>No protocol is named anywhere in the model</b>: the same three ` +
-    `factors score every row, and every factor is printed in each protocol's detail view.</p>` +
-    `<div class="formula">implied = TVL x peer multiple x growth factor x age factor</div>` +
+    `<p>The board prices a launch that has not happened, in two steps. First a <b>value model fitted on the ` +
+    `snapshot's own traded protocols</b> says what a launch would be worth if it traded like them. Then ` +
+    `<b>launch odds</b> measured from the snapshot's own record say how much of that value to book today. ` +
+    `<b>No protocol is named anywhere in the model</b>: the same fitted line and the same odds score every row, ` +
+    `and every factor is printed in each protocol's detail view.</p>` +
+    `<div class="formula">fitted value = exp(${f.intercept.toFixed(2)} + ${f.slope.toFixed(2)} x log TVL) &nbsp;·&nbsp; implied = fitted value x launch odds</div>` +
     `<ul>` +
-    `<li><b>Peer multiple</b>: the median market-cap-to-TVL ratio of the traded protocols in the same category ` +
-    `(${R.global_peers} measured; a category with fewer than ${m.min_category_peers} traded peers uses the global median ` +
-    `${R.global_multiple.toFixed(2)}x). Multiples are clamped to ${m.multiple_floor}x-${m.multiple_cap}x so one outlier cannot price a category.</li>` +
-    `<li><b>Growth factor</b>: 1 + clamp(7d TVL change, ${m.growth_clamp_min}%, +${m.growth_clamp_max}%) x ${m.growth_weight}, ` +
-    `so a hot week lifts a value by at most half, and a bad week cannot erase it.</li>` +
-    `<li><b>Age factor</b>: ${m.age_floor} + ${m.age_range} x ln(1 + tokenless days) / ln(1 + ${m.age_horizon_days}), ` +
-    `rising slowly toward ${m.age_floor + m.age_range} for protocols that have operated five years with no token; an unknown listing date scores the neutral 1.00.</li>` +
+    `<li><b>The fit</b>: ordinary least squares of log market cap on log TVL over the ${f.peers} protocols that ` +
+    `already trade. The slope under 1 says a TVL dollar inside a larger protocol prices lower than one inside a ` +
+    `smaller protocol, which is what the market's own figures show.</li>` +
+    `<li><b>Terms earn their place or they are dropped</b>: per-category offsets, a 7-day growth term and a ` +
+    `tokenless-age term were each fitted and put through the held-out test below. On this snapshot none of them ` +
+    `beat the plain line out of sample, so none of them prices a row. The v1 model's hand-set category medians ` +
+    `are the baseline row of the same table.</li>` +
+    `<li><b>Launch odds</b>: among all ${c.total} protocols in the snapshot, the share that already carry a token, ` +
+    `grouped by tokenless-age band and by TVL band (tables below, Laplace-smoothed). A row's odds are the average ` +
+    `of its two bands; a protocol with no listing date takes the global share for its age half.</li>` +
     `<li><b>Off the board</b>: wrapped, staked, bridged and versioned products of other protocols, and exchange ` +
     `products, are excluded at any size: their launch would be a parent's token, not their own. The ${R.watchlist_size} ` +
     `watchlist protocols are always carried, whatever the model says.</li>` +
     `</ul>`;
-  $('mult-body').innerHTML = R.multiples
+  $('valid-body').innerHTML = R.validation
+    .map((v) => {
+      const fate = v.id === f.winner ? 'ships' : v.id === 'flat' ? 'v1 baseline' : 'tested, dropped';
+      return `<tr><td class="cat">${esc(v.label)}</td><td class="num">${v.median_log_error.toFixed(4)}</td><td class="cat">${fate}</td></tr>`;
+    })
+    .join('') +
+    `<tr><td class="cat wrap" colspan="3">Each candidate is fitted on a seeded 80% of the ${f.peers} traded peers and scored on the held-out 20%, ` +
+    `${f.validation_repeats} times over; the figure is the mean held-out median absolute log error. Lower is closer to the market's own prices.</td></tr>`;
+  const bandTable = (title, bands) =>
+    `<p><b>${title}</b></p><table class="board mult-table"><thead><tr><th>Band</th><th class="num">Protocols</th>` +
+    `<th class="num">Carry a token</th><th class="num">Share</th></tr></thead><tbody>` +
+    bands.map((b) => `<tr><td class="cat">${esc(b.label)}</td><td class="num">${b.n}</td><td class="num">${b.with_token}</td><td class="num">${fmtShare(b.share)}</td></tr>`).join('') +
+    `</tbody></table>`;
+  $('odds-body').innerHTML =
+    `<p>Global base rate: <b>${fmtShare(R.odds.global_share)}</b> of the snapshot's ${c.total} protocols already carry a token.</p>` +
+    bandTable('By tokenless age', R.odds.age_bands) +
+    bandTable('By TVL', R.odds.tvl_bands);
+  const excluded = c.excluded_product_category + c.excluded_versioned + c.excluded_wrapped + c.excluded_exchange_prefix;
+  $('census-body').innerHTML =
+    `<ul>` +
+    `<li><b>${c.ranked} ranked</b> on the board (the ${R.watchlist_size} watchlist protocols among them).</li>` +
+    `<li><b>${c.already_trading} already trading</b>: a token exists, so there is no launch to price.</li>` +
+    `<li><b>${excluded} excluded as products of another protocol</b>: ${c.excluded_product_category} by product category ` +
+    `(bridge, canonical bridge, liquid staking, liquid restaking, restaked BTC, exchange), ${c.excluded_versioned} by a versioned name, ` +
+    `${c.excluded_wrapped} by a wrapped or staked name, ${c.excluded_exchange_prefix} by an exchange name.</li>` +
+    `<li>Total: ${c.ranked} + ${c.already_trading} + ${excluded} = <b>${c.total}</b>, the whole snapshot.</li>` +
+    `</ul>`;
+  $('farm-body').innerHTML =
+    `<p>Every plan is costed from its own steps: the chain's gas per touch times the plan's weekly touches plus entry and exit, ` +
+    `plus swap and borrow fees of ${(a.fee_rate * 100).toFixed(1)}% of the capital the plan deploys. Against that cost stands the ` +
+    `expected launch share: a launch is assumed to allocate ${Math.round(a.drop_share * 100)}% of its implied value to the community, ` +
+    `spread over ${a.qualifying_wallets.toLocaleString('en-US')} qualifying wallets. <b>FARM</b> when the expected share covers the cost ` +
+    `${a.farm_multiple} times over, <b>THIN</b> when it merely covers it, <b>SKIP</b> when it does not. The assumptions are the radar's own ` +
+    `bookkeeping, printed so the arithmetic in every detail view can be checked; they are not a promise about any real launch.</p>`;
+  $('mult-body').innerHTML = R.categories
     .map(
-      (c) =>
-        `<tr><td class="cat">${esc(c.category)}</td><td class="num">${c.peers}</td>` +
-        `<td class="num">${c.multiple.toFixed(2)}x</td><td class="cat">${esc(c.basis)}</td></tr>`,
+      (x) =>
+        `<tr><td class="cat">${esc(x.category)}</td><td class="num">${x.peers}</td>` +
+        `<td class="num">${x.offset > 0 ? '+' : ''}${x.offset.toFixed(2)}</td>` +
+        `<td class="num">${x.multiple_at_ref.toFixed(2)}x</td><td class="cat">${esc(x.basis)}</td></tr>`,
     )
-    .join('');
+    .join('') +
+    `<tr><td class="cat wrap" colspan="5">An offset is a category's median residual from the fitted line, shrunk toward zero; offsets were fitted ` +
+    `for every category with enough peers and then dropped when the held-out test scored them worse than the plain line, so every category ` +
+    `is currently priced by the global fit alone.</td></tr>`;
 }
 
 /** Wire the controls and draw everything once. */
@@ -246,6 +313,7 @@ function init() {
   $('q').addEventListener('input', (e) => { state.q = e.target.value; renderBoard(); });
   $('cat').addEventListener('change', (e) => { state.cat = e.target.value; renderBoard(); });
   $('chain').addEventListener('change', (e) => { state.chain = e.target.value; renderBoard(); });
+  $('verdict').addEventListener('change', (e) => { state.verdict = e.target.value; renderBoard(); });
   $('wl').addEventListener('change', (e) => { state.wl = e.target.checked; renderBoard(); });
   document.querySelectorAll('#board th[data-sort]').forEach((th) => {
     th.addEventListener('click', () => {
